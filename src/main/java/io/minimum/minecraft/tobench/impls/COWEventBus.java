@@ -17,7 +17,6 @@ public class COWEventBus
 
     private final Map<Class<?>, Map<Byte, Map<Object, Method[]>>> byListenerAndPriority = new HashMap<>();
     private volatile Map<Class<?>, EventHandlerMethod[]> byEventBaked = Collections.emptyMap();
-    private final ReadWriteLock lock = new ReentrantReadWriteLock();
     private final Logger logger;
 
     public COWEventBus()
@@ -32,15 +31,7 @@ public class COWEventBus
 
     public void post(Object event)
     {
-        EventHandlerMethod[] handlers;
-        lock.readLock().lock();
-        try
-        {
-            handlers = byEventBaked.get( event.getClass() );
-        } finally
-        {
-            lock.readLock().unlock();
-        }
+        EventHandlerMethod[] handlers = byEventBaked.get( event.getClass() );
 
         if ( handlers != null )
         {
@@ -101,69 +92,55 @@ public class COWEventBus
     public void register(Object listener)
     {
         Map<Class<?>, Map<Byte, Set<Method>>> handler = findHandlers( listener );
-        lock.writeLock().lock();
-        try
+        for ( Map.Entry<Class<?>, Map<Byte, Set<Method>>> e : handler.entrySet() )
         {
-            for ( Map.Entry<Class<?>, Map<Byte, Set<Method>>> e : handler.entrySet() )
+            Map<Byte, Map<Object, Method[]>> prioritiesMap = byListenerAndPriority.get( e.getKey() );
+            if ( prioritiesMap == null )
             {
-                Map<Byte, Map<Object, Method[]>> prioritiesMap = byListenerAndPriority.get( e.getKey() );
-                if ( prioritiesMap == null )
-                {
-                    prioritiesMap = new HashMap<>();
-                    byListenerAndPriority.put( e.getKey(), prioritiesMap );
-                }
-                for ( Map.Entry<Byte, Set<Method>> entry : e.getValue().entrySet() )
-                {
-                    Map<Object, Method[]> currentPriorityMap = prioritiesMap.get( entry.getKey() );
-                    if ( currentPriorityMap == null )
-                    {
-                        currentPriorityMap = new HashMap<>();
-                        prioritiesMap.put( entry.getKey(), currentPriorityMap );
-                    }
-                    Method[] baked = new Method[ entry.getValue().size() ];
-                    currentPriorityMap.put( listener, entry.getValue().toArray( baked ) );
-                }
-                bakeHandlers( e.getKey() );
+                prioritiesMap = new HashMap<>();
+                byListenerAndPriority.put( e.getKey(), prioritiesMap );
             }
-        } finally
-        {
-            lock.writeLock().unlock();
+            for ( Map.Entry<Byte, Set<Method>> entry : e.getValue().entrySet() )
+            {
+                Map<Object, Method[]> currentPriorityMap = prioritiesMap.get( entry.getKey() );
+                if ( currentPriorityMap == null )
+                {
+                    currentPriorityMap = new HashMap<>();
+                    prioritiesMap.put( entry.getKey(), currentPriorityMap );
+                }
+                Method[] baked = new Method[ entry.getValue().size() ];
+                currentPriorityMap.put( listener, entry.getValue().toArray( baked ) );
+            }
+            bakeHandlers( e.getKey() );
         }
     }
 
     public void unregister(Object listener)
     {
         Map<Class<?>, Map<Byte, Set<Method>>> handler = findHandlers( listener );
-        lock.writeLock().lock();
-        try
+        for ( Map.Entry<Class<?>, Map<Byte, Set<Method>>> e : handler.entrySet() )
         {
-            for ( Map.Entry<Class<?>, Map<Byte, Set<Method>>> e : handler.entrySet() )
+            Map<Byte, Map<Object, Method[]>> prioritiesMap = byListenerAndPriority.get( e.getKey() );
+            if ( prioritiesMap != null )
             {
-                Map<Byte, Map<Object, Method[]>> prioritiesMap = byListenerAndPriority.get( e.getKey() );
-                if ( prioritiesMap != null )
+                for ( Byte priority : e.getValue().keySet() )
                 {
-                    for ( Byte priority : e.getValue().keySet() )
+                    Map<Object, Method[]> currentPriority = prioritiesMap.get( priority );
+                    if ( currentPriority != null )
                     {
-                        Map<Object, Method[]> currentPriority = prioritiesMap.get( priority );
-                        if ( currentPriority != null )
+                        currentPriority.remove( listener );
+                        if ( currentPriority.isEmpty() )
                         {
-                            currentPriority.remove( listener );
-                            if ( currentPriority.isEmpty() )
-                            {
-                                prioritiesMap.remove( priority );
-                            }
+                            prioritiesMap.remove( priority );
                         }
                     }
-                    if ( prioritiesMap.isEmpty() )
-                    {
-                        byListenerAndPriority.remove( e.getKey() );
-                    }
                 }
-                bakeHandlers( e.getKey() );
+                if ( prioritiesMap.isEmpty() )
+                {
+                    byListenerAndPriority.remove( e.getKey() );
+                }
             }
-        } finally
-        {
-            lock.writeLock().unlock();
+            bakeHandlers( e.getKey() );
         }
     }
 
@@ -174,7 +151,7 @@ public class COWEventBus
      */
     private void bakeHandlers(Class<?> eventClass)
     {
-        Map<Class<?>, EventHandlerMethod[]> baked = new HashMap<>();
+        Map<Class<?>, EventHandlerMethod[]> baked = new HashMap<>( byEventBaked );
 
         Map<Byte, Map<Object, Method[]>> handlersByPriority = byListenerAndPriority.get( eventClass );
         if ( handlersByPriority != null )

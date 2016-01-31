@@ -26,6 +26,7 @@
 package io.minimum.minecraft.tobench;
 
 import io.minimum.minecraft.tobench.impls.COWEventBus;
+import io.minimum.minecraft.tobench.impls.FrozenEventBus;
 import io.minimum.minecraft.tobench.impls.LockingEventBus;
 import io.minimum.minecraft.tobench.impls.CHMEventBus;
 import org.openjdk.jmh.annotations.*;
@@ -43,17 +44,22 @@ public class MyBenchmark {
     private LockingEventBus lockingEventBus = new LockingEventBus();
     private CHMEventBus chmEventBus = new CHMEventBus();
     private COWEventBus cowEventBus = new COWEventBus();
+    private FrozenEventBus frozenEventBus;
 
     @Param({"1", "2", "4", "8", "16"})
     private int registeredHandlers;
 
     @Setup
     public void setup(Blackhole blackhole) {
+        FrozenEventBus.Builder builder = new FrozenEventBus.Builder();
         for (int i = 0; i < registeredHandlers; i++) {
-            chmEventBus.register(new TestEventHandler(blackhole));
-            lockingEventBus.register(new TestEventHandler(blackhole));
-            cowEventBus.register(new TestEventHandler(blackhole));
+            TestEventHandler h = new TestEventHandler(blackhole);
+            chmEventBus.register(h);
+            lockingEventBus.register(h);
+            cowEventBus.register(h);
+            builder.register(h);
         }
+        frozenEventBus = builder.build();
     }
 
     @Benchmark
@@ -78,6 +84,14 @@ public class MyBenchmark {
     public void cowEventBusThrpt() {
         // place your benchmarked code here
         cowEventBus.post(TestEvent.EVENT);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.Throughput)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public void frozenEventBusThrpt() {
+        // place your benchmarked code here
+        frozenEventBus.post(TestEvent.EVENT);
     }
 
     public static void main(String[] args) throws RunnerException {
