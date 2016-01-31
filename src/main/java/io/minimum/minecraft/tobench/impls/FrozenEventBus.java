@@ -51,10 +51,12 @@ public class FrozenEventBus {
     public static class Builder {
         private final Map<Class<?>, Map<Byte, Map<Object, Method[]>>> byListenerAndPriority = new HashMap<>();
         private final Map<Class<?>, EventHandlerMethod[]> byEventBaked = new HashMap<>();
-        private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
         public FrozenEventBus build() {
             ImmutableMap.Builder<Class<?>, List<EventHandlerMethod>> builder = ImmutableMap.builder();
+            for (Class<?> aClass : byListenerAndPriority.keySet()) {
+                bakeHandlers( aClass );
+            }
             for (Map.Entry<Class<?>, EventHandlerMethod[]> entry : byEventBaked.entrySet()) {
                 builder.put(entry.getKey(), ImmutableList.copyOf(entry.getValue()));
             }
@@ -95,76 +97,30 @@ public class FrozenEventBus {
         public void register(Object listener)
         {
             Map<Class<?>, Map<Byte, Set<Method>>> handler = findHandlers( listener );
-            lock.writeLock().lock();
-            try
+            for ( Map.Entry<Class<?>, Map<Byte, Set<Method>>> e : handler.entrySet() )
             {
-                for ( Map.Entry<Class<?>, Map<Byte, Set<Method>>> e : handler.entrySet() )
+                Map<Byte, Map<Object, Method[]>> prioritiesMap = byListenerAndPriority.get( e.getKey() );
+                if ( prioritiesMap == null )
                 {
-                    Map<Byte, Map<Object, Method[]>> prioritiesMap = byListenerAndPriority.get( e.getKey() );
-                    if ( prioritiesMap == null )
-                    {
-                        prioritiesMap = new HashMap<>();
-                        byListenerAndPriority.put( e.getKey(), prioritiesMap );
-                    }
-                    for ( Map.Entry<Byte, Set<Method>> entry : e.getValue().entrySet() )
-                    {
-                        Map<Object, Method[]> currentPriorityMap = prioritiesMap.get( entry.getKey() );
-                        if ( currentPriorityMap == null )
-                        {
-                            currentPriorityMap = new HashMap<>();
-                            prioritiesMap.put( entry.getKey(), currentPriorityMap );
-                        }
-                        Method[] baked = new Method[ entry.getValue().size() ];
-                        currentPriorityMap.put( listener, entry.getValue().toArray( baked ) );
-                    }
-                    bakeHandlers( e.getKey() );
+                    prioritiesMap = new HashMap<>();
+                    byListenerAndPriority.put( e.getKey(), prioritiesMap );
                 }
-            } finally
-            {
-                lock.writeLock().unlock();
-            }
-        }
-
-        public void unregister(Object listener)
-        {
-            Map<Class<?>, Map<Byte, Set<Method>>> handler = findHandlers( listener );
-            lock.writeLock().lock();
-            try
-            {
-                for ( Map.Entry<Class<?>, Map<Byte, Set<Method>>> e : handler.entrySet() )
+                for ( Map.Entry<Byte, Set<Method>> entry : e.getValue().entrySet() )
                 {
-                    Map<Byte, Map<Object, Method[]>> prioritiesMap = byListenerAndPriority.get( e.getKey() );
-                    if ( prioritiesMap != null )
+                    Map<Object, Method[]> currentPriorityMap = prioritiesMap.get( entry.getKey() );
+                    if ( currentPriorityMap == null )
                     {
-                        for ( Byte priority : e.getValue().keySet() )
-                        {
-                            Map<Object, Method[]> currentPriority = prioritiesMap.get( priority );
-                            if ( currentPriority != null )
-                            {
-                                currentPriority.remove( listener );
-                                if ( currentPriority.isEmpty() )
-                                {
-                                    prioritiesMap.remove( priority );
-                                }
-                            }
-                        }
-                        if ( prioritiesMap.isEmpty() )
-                        {
-                            byListenerAndPriority.remove( e.getKey() );
-                        }
+                        currentPriorityMap = new HashMap<>();
+                        prioritiesMap.put( entry.getKey(), currentPriorityMap );
                     }
-                    bakeHandlers( e.getKey() );
+                    Method[] baked = new Method[ entry.getValue().size() ];
+                    currentPriorityMap.put( listener, entry.getValue().toArray( baked ) );
                 }
-            } finally
-            {
-                lock.writeLock().unlock();
             }
         }
 
         /**
-         * Shouldn't be called without first locking the writeLock; intended for use
-         * only inside {@link #register(Object) register(Object)} or
-         * {@link #unregister(Object) unregister(Object)}.
+         * Shouldn't be called without first locking the writeLock.
          */
         private void bakeHandlers(Class<?> eventClass)
         {
